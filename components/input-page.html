@@ -1,0 +1,113 @@
+<main id="page-input" class="page-content active">
+    <div class="card input-card">
+        <div class="mode-selector">
+            <button
+                type="button"
+                class="mode-btn active cash-mode"
+                onclick="setMode('Cash')"
+            >
+                <i class="fa-solid fa-money-bill-wave"></i>
+                <span>Cash</span>
+            </button>
+            <button
+                type="button"
+                class="mode-btn transfer-mode"
+                onclick="setMode('Transfer')"
+            >
+                <i class="fa-solid fa-building-columns"></i>
+                <span>Transfer</span>
+            </button>
+            <button
+                type="button"
+                class="mode-btn out-mode"
+                onclick="setMode('Out')"
+            >
+                <i class="fa-solid fa-arrow-up-from-bracket"></i>
+                <span>Out</span>
+            </button>
+        </div>
+
+        <div
+            class="transfer-type-selector"
+            id="group-transfer-type"
+            style="display: none"
+        >
+            <button
+                type="button"
+                class="transfer-type-btn active"
+                id="btn-transfer-qris"
+                onclick="setTransferType('qris')"
+            >
+                <i class="fa-solid fa-qrcode"></i> QRIS
+            </button>
+            <button
+                type="button"
+                class="transfer-type-btn"
+                id="btn-transfer-bank"
+                onclick="setTransferType('bank')"
+            >
+                <i class="fa-solid fa-building-columns"></i> Bank
+            </button>
+        </div>
+
+        <div class="display-container">
+            <span class="display-label"
+                >Nominal Transaksi (<span id="active-mode-label">Cash</span>)</span
+            >
+            <div class="display-value" id="display-amount">Rp 0</div>
+        </div>
+
+        <div
+            class="form-group"
+            id="group-keterangan"
+            style="display: none"
+        >
+            <label for="input-keterangan">
+                <i class="fa-solid fa-pen-to-square"></i> Keterangan Pengeluaran
+            </label>
+            <input
+                type="text"
+                id="input-keterangan"
+                placeholder="Contoh: Makan siang, Bensin, Token listrik..."
+                maxlength="50"
+            />
+        </div>
+
+        <div class="keypad-grid">
+            <button class="key-btn" onclick="pressKey('7')">7</button>
+            <button class="key-btn" onclick="pressKey('8')">8</button>
+            <button class="key-btn" onclick="pressKey('9')">9</button>
+            <button class="key-btn key-action key-clear" onclick="pressKey('C')">C</button>
+
+            <button class="key-btn" onclick="pressKey('4')">4</button>
+            <button class="key-btn" onclick="pressKey('5')">5</button>
+            <button class="key-btn" onclick="pressKey('6')">6</button>
+            <button class="key-btn key-action key-back" onclick="pressKey('BACK')">
+                <i class="fa-solid fa-backspace"></i>
+            </button>
+
+            <button class="key-btn" onclick="pressKey('1')">1</button>
+            <button class="key-btn" onclick="pressKey('2')">2</button>
+            <button class="key-btn" onclick="pressKey('3')">3</button>
+            <button class="key-btn key-double" onclick="pressKey('00')">00</button>
+
+            <button class="key-btn" onclick="pressKey('0')">0</button>
+            <button
+                class="key-btn key-submit cash-mode"
+                id="btn-save"
+                onclick="saveTransaction()"
+            >
+                <i class="fa-solid fa-check"></i> Simpan
+            </button>
+        </div>
+    </div>
+
+    <div class="card recent-card">
+        <div class="recent-header">
+            <h3>
+                <i class="fa-solid fa-clock-rotate-left"></i> 3 Transaksi Terakhir
+            </h3>
+        </div>
+        <div class="recent-list" id="recent-list"></div>
+    </div>
+</main>

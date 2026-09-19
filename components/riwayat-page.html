@@ -1,0 +1,109 @@
+<main id="page-riwayat" class="page-content">
+    <div class="card action-bar-card">
+        <div class="date-filter-group">
+            <label for="history-date-picker">
+                <i class="fa-regular fa-calendar-days"></i> Pilih Tanggal:
+            </label>
+            <input
+                type="date"
+                id="history-date-picker"
+                onchange="renderHistory()"
+            />
+        </div>
+        <div class="csv-actions">
+            <button class="btn btn-outline-primary" onclick="exportCSV()">
+                <i class="fa-solid fa-file-export"></i> Ekspor CSV
+            </button>
+            <button
+                class="btn btn-outline-secondary"
+                onclick="document.getElementById('csv-file-input').click()"
+            >
+                <i class="fa-solid fa-file-import"></i> Impor CSV
+            </button>
+            <input
+                type="file"
+                id="csv-file-input"
+                accept=".csv,text/csv,text/plain"
+                style="display: none"
+                onchange="importCSV(event)"
+            />
+        </div>
+    </div>
+
+    <div class="sub-tabs-container five-tabs">
+        <button class="sub-tab-btn active" id="subtab-all" onclick="setSubTab('all')">All</button>
+        <button class="sub-tab-btn" id="subtab-cash" onclick="setSubTab('Cash')">Cash</button>
+        <button class="sub-tab-btn" id="subtab-qris" onclick="setSubTab('QRIS')">QRIS</button>
+        <button class="sub-tab-btn" id="subtab-bank" onclick="setSubTab('Bank')">Bank</button>
+        <button class="sub-tab-btn" id="subtab-out" onclick="setSubTab('Out')">Out</button>
+    </div>
+
+    <div class="summary-grid">
+        <div class="summary-card total-pemasukan full-width">
+            <div class="summary-icon"><i class="fa-solid fa-sack-dollar"></i></div>
+            <div class="summary-info">
+                <span class="summary-label">Total Omzet</span>
+                <h3 id="stat-total-pemasukan">Rp 0</h3>
+            </div>
+        </div>
+        <div class="summary-card cash">
+            <div class="summary-icon"><i class="fa-solid fa-money-bill-wave"></i></div>
+            <div class="summary-info">
+                <span class="summary-label">Total Cash</span>
+                <h3 id="stat-total-cash">Rp 0</h3>
+            </div>
+        </div>
+        <div class="summary-card qris">
+            <div class="summary-icon"><i class="fa-solid fa-qrcode"></i></div>
+            <div class="summary-info">
+                <span class="summary-label">Total QRIS</span>
+                <h3 id="stat-total-qris">Rp 0</h3>
+            </div>
+        </div>
+        <div class="summary-card transfer">
+            <div class="summary-icon"><i class="fa-solid fa-building-columns"></i></div>
+            <div class="summary-info">
+                <span class="summary-label">Total Bank</span>
+                <h3 id="stat-total-bank">Rp 0</h3>
+            </div>
+        </div>
+        <div class="summary-card out">
+            <div class="summary-icon"><i class="fa-solid fa-arrow-trend-down"></i></div>
+            <div class="summary-info">
+                <span class="summary-label">Total Out</span>
+                <h3 id="stat-total-out">Rp 0</h3>
+            </div>
+        </div>
+        <div class="summary-card balance full-width">
+            <div class="summary-icon"><i class="fa-solid fa-scale-balanced"></i></div>
+            <div class="summary-info">
+                <span class="summary-label">Sisa Cash (Cash - Out)</span>
+                <h3 id="stat-balance">Rp 0</h3>
+            </div>
+        </div>
+    </div>
+
+    <div class="card history-card">
+        <div class="history-header">
+            <h2>Daftar Transaksi</h2>
+            <span class="badge-count" id="history-count">0 Catatan</span>
+        </div>
+        <div class="history-list" id="history-list"></div>
+    </div>
+
+    <div class="card">
+        <div class="json-action-group">
+            <button class="btn btn-outline-secondary" onclick="openChangePinModal()" title="Pengaturan PIN">
+                <i class="fa-solid fa-key"></i> Ganti PIN
+            </button>
+            <button type="button" class="btn btn-outline-success" onclick="exportJSONBackup()" title="Backup Seluruh Data">
+                <i class="fa-solid fa-download"></i> Backup JSON
+            </button>
+            <button type="button" class="btn btn-outline-danger" onclick="document.getElementById('json-file-input').click()" title="Restore Seluruh Data">
+                <i class="fa-solid fa-upload"></i> Restore JSON
+            </button>
+            <input type="file" id="json-file-input" accept=".json,text/json,text/plain" style="display: none" onchange="importJSONRestore(event)" />
+            <div id="version" class="btn btn-outline-primary"></div>
+        </div>
+    </div>
+</main>

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aplikasi Pencatat Transaksi</title>
+    <link rel="manifest" href="manifest.json" />
+    <meta name="theme-color" content="#3b82f6" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <!-- Placeholder Slots Komponen -->
+    <div id="lock-screen-slot"></div>
+
+    <div class="app-container">
+        <div id="header-slot"></div>
+        <div id="input-page-slot"></div>
+        <div id="riwayat-page-slot"></div>
+    </div>
+
+    <div id="modals-slot"></div>
+    <div id="toast" class="toast">Notifikasi</div>
+
+    <!-- Firebase SDKs & Config -->
+    <script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-database-compat.js"></script>
+
+    <!-- Script Utama -->
+    <script type="module" src="js/main.js"></script>
+    <script>
+        if ("serviceWorker" in navigator && location.hostname !== "localhost" ) {
+            window.addEventListener("load", () => {
+                navigator.serviceWorker
+                .register("./sw.js")
+                .then((reg) => console.log("Service Worker aktif:", reg.scope))
+                .catch((err) => console.error("Service Worker gagal:", err));
+            });
+        }
+  </script>
+</body>
+
+</html>

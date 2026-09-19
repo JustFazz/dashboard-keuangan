@@ -1,0 +1,71 @@
+<div
+    class="app-lock-screen"
+    id="firebase-login-screen"
+    style="display: none;"
+>
+    <div class="lock-card">
+        <div class="lock-icon-wrapper">
+            <i class="fa-solid fa-cloud"></i>
+        </div>
+
+        <h2>Login Firebase</h2>
+        <p>Login untuk mengaktifkan sinkronisasi data.</p>
+
+        <div class="form-group">
+            <label for="firebase-email">Email</label>
+            <input
+                type="email"
+                id="firebase-email"
+                class="form-input"
+                placeholder="Email"
+                autocomplete="email"
+            />
+        </div>
+
+        <div class="form-group">
+            <label for="firebase-password">Password</label>
+            <input
+                type="password"
+                id="firebase-password"
+                class="form-input"
+                placeholder="Password"
+                autocomplete="current-password"
+            />
+        </div>
+
+        <button
+            type="button"
+            class="btn btn-primary btn-block"
+            onclick="firebaseLogin()"
+        >
+            <i class="fa-solid fa-right-to-bracket"></i>
+            Login
+        </button>
+
+        <p id="firebase-login-status"></p>
+    </div>
+</div>
+<div class="app-lock-screen" id="app-lock-screen">
+    <div class="lock-card">
+        <div class="lock-icon-wrapper">
+            <i class="fa-solid fa-shield-halved"></i>
+        </div>
+        <h2>Aplikasi Terkunci</h2>
+        <p>Masukkan PIN untuk mengakses aplikasi</p>
+        <input
+            type="password"
+            id="app-pin-input"
+            maxlength="4"
+            class="form-input pin-field"
+            placeholder="••••"
+            autocomplete="off"
+        />
+        <button
+            type="button"
+            class="btn btn-primary btn-block"
+            onclick="unlockApp()"
+        >
+            <i class="fa-solid fa-lock-open"></i> Buka Aplikasi
+        </button>
+    </div>
+</div>

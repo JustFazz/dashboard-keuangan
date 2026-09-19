@@ -1,0 +1,59 @@
+<div class="modal-overlay" id="edit-modal">
+    <div class="modal-card">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-pen-to-square"></i> Edit Transaksi</h3>
+            <button class="modal-close" onclick="closeEditModal()">&times;</button>
+        </div>
+        <form id="edit-form" onsubmit="handleEditSubmit(event)">
+            <input type="hidden" id="edit-id" />
+            <div class="form-group">
+                <label>Jenis Transaksi</label>
+                <select id="edit-type" class="form-input">
+                    <option value="Cash">Cash</option>
+                    <option value="Transfer-qris">Transfer (QRIS)</option>
+                    <option value="Transfer-bank">Transfer (Bank)</option>
+                    <option value="Out">Out (Pengeluaran)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Nominal (Rp)</label>
+                <input type="number" id="edit-amount" class="form-input" min="1" required />
+            </div>
+            <div class="form-group" id="edit-keterangan-group">
+                <label>Keterangan</label>
+                <input type="text" id="edit-keterangan" class="form-input" placeholder="Keterangan transaksi" />
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Batal</button>
+                <button type="submit" class="btn btn-primary">Simpan Perubahan</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="modal-overlay" id="change-pin-modal">
+    <div class="modal-card">
+        <div class="modal-header">
+            <h3><i class="fa-solid fa-key"></i> Ganti PIN Aplikasi</h3>
+            <button class="modal-close" onclick="closeChangePinModal()">&times;</button>
+        </div>
+        <form onsubmit="handleChangePinSubmit(event)">
+            <div class="form-group">
+                <label>PIN Saat Ini</label>
+                <input type="password" id="pin-old" class="form-input" maxlength="4" placeholder="••••" required />
+            </div>
+            <div class="form-group">
+                <label>PIN Baru (4 Digit)</label>
+                <input type="password" id="pin-new" class="form-input" maxlength="4" placeholder="••••" required />
+            </div>
+            <div class="form-group">
+                <label>Konfirmasi PIN Baru</label>
+                <input type="password" id="pin-confirm" class="form-input" maxlength="4" placeholder="••••" required />
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeChangePinModal()">Batal</button>
+                <button type="submit" class="btn btn-primary">Simpan PIN Baru</button>
+            </div>
+        </form>
+    </div>
+</div>
