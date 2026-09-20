@@ -91,37 +91,113 @@ export function importCSV(e) {
     reader.readAsText(file);
 }
 
+
 export async function exportJSONBackup() {
     try {
         const allData = await dbGetAll();
+
         if (!allData || allData.length === 0) {
             return showToast("Tidak ada data transaksi untuk di-backup!");
         }
 
-        const jsonString = JSON.stringify(allData, null, 2);
-        const blob = new Blob([jsonString], { type: "application/json" });
+        const backup = {};
+
+        for (const item of allData) {
+            // Ambil tanggal transaksi
+            // Sesuaikan dengan field tanggal yang digunakan aplikasi
+            const dateValue =
+                item.dateOnly ||
+                item.tanggal ||
+                item.createdAt;
+
+            if (!dateValue) {
+                console.warn("Transaksi tanpa tanggal:", item);
+                continue;
+            }
+
+            const date = new Date(dateValue);
+
+            if (isNaN(date.getTime())) {
+                console.warn("Tanggal transaksi tidak valid:", item);
+                continue;
+            }
+
+            const year = String(date.getFullYear());
+            const month = String(date.getMonth() + 1).padStart(2, "0");
+            const day = String(date.getDate()).padStart(2, "0");
+
+            // Pastikan struktur tersedia
+            if (!backup[year]) {
+                backup[year] = {};
+            }
+
+            if (!backup[year][month]) {
+                backup[year][month] = {};
+            }
+
+            if (!backup[year][month][day]) {
+                backup[year][month][day] = {
+                    transactions: {}
+                };
+            }
+
+            // ID transaksi
+            const transactionId =
+                item.id ||
+                item.transactionId ||
+                Date.now();
+
+            // Simpan transaksi
+            backup[year][month][day].transactions[transactionId] = {
+                ...item
+            };
+        }
+
+        const jsonString = JSON.stringify(backup, null, 2);
+
+        const blob = new Blob(
+            [jsonString],
+            { type: "application/json" }
+        );
+
         const url = URL.createObjectURL(blob);
 
         const link = document.createElement("a");
         link.href = url;
         link.download = `backup_transaksi_${getTodayDateString()}.json`;
+
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+
         URL.revokeObjectURL(url);
 
         showToast("Backup JSON berhasil diunduh!");
+
     } catch (err) {
+        console.error("Export JSON error:", err);
         showToast("Gagal membuat backup data!");
     }
 }
 
+
+// ========================================
+// IMPORT JSON RESTORE
+// Menerima struktur:
+// tahun / bulan / tanggal / transaction / ID
+// ========================================
+
 export function importJSONRestore(e) {
     const file = e.target.files[0];
+
     if (!file) return;
 
     const confirmRestore = confirm(
-        "⚠️ PERINGATAN RESTORE DATA:\n\nProses ini akan MENGHAPUS SELURUH DATA LAMA di aplikasi dan menggantinya dengan data dari file backup JSON.\n\nApakah Anda yakin ingin melanjutkan?"
+        "⚠️ PERINGATAN RESTORE DATA:\n\n" +
+        "Proses ini akan MENGHAPUS SELURUH DATA LAMA " +
+        "di aplikasi dan menggantinya dengan data dari " +
+        "file backup JSON.\n\n" +
+        "Apakah Anda yakin ingin melanjutkan?"
     );
 
     if (!confirmRestore) {
@@ -130,24 +206,119 @@ export function importJSONRestore(e) {
     }
 
     const reader = new FileReader();
+
     reader.onload = async function (evt) {
         try {
-            const data = JSON.parse(evt.target.result);
-            if (Array.isArray(data)) {
-                await dbClear();
-                for (const item of data) {
-                    await dbAdd(item);
-                }
-                renderRecentTransactions();
-                renderHistory();
-                showToast("Restore Data Berhasil!");
-            } else {
+            const backup = JSON.parse(evt.target.result);
+
+            // Validasi dasar
+            if (
+                !backup ||
+                typeof backup !== "object" ||
+                Array.isArray(backup)
+            ) {
                 showToast("Format file JSON tidak sesuai!");
+                return;
             }
+
+            const transactions = [];
+
+            // ========================================
+            // Baca:
+            // tahun → bulan → tanggal → transaction
+            // ========================================
+
+            for (const year of Object.keys(backup)) {
+
+                const months = backup[year];
+
+                if (!months || typeof months !== "object") {
+                    continue;
+                }
+
+                for (const month of Object.keys(months)) {
+
+                    const days = months[month];
+
+                    if (!days || typeof days !== "object") {
+                        continue;
+                    }
+
+                    for (const day of Object.keys(days)) {
+
+                        const dayData = days[day];
+
+                        if (
+                            !dayData ||
+                            !dayData.transactions ||
+                            typeof dayData.transactions !== "object"
+                        ) {
+                            continue;
+                        }
+
+                        const transactionData =
+                            dayData.transactions;
+
+                        for (const transactionId of Object.keys(transactionData)) {
+
+                            const item =
+                                transactionData[transactionId];
+
+                            if (!item || typeof item !== "object") {
+                                continue;
+                            }
+
+                            // Pastikan ID tetap ada
+                            const transaction = {
+                                ...item,
+                                id:
+                                    item.id ??
+                                    transactionId
+                            };
+
+                            transactions.push(transaction);
+                        }
+                    }
+                }
+            }
+
+            if (transactions.length === 0) {
+                showToast("Tidak ada transaksi di file backup!");
+                return;
+            }
+
+            // ========================================
+            // Hapus data lama
+            // ========================================
+
+            await dbClear();
+
+            // ========================================
+            // Masukkan kembali ke IndexedDB
+            // ========================================
+
+            for (const item of transactions) {
+                await dbAdd(item);
+            }
+
+            // ========================================
+            // Refresh UI
+            // ========================================
+
+            renderRecentTransactions();
+            renderHistory();
+
+            showToast(
+                `Restore berhasil! ${transactions.length} transaksi dipulihkan.`
+            );
+
         } catch (err) {
+            console.error("Import JSON error:", err);
             showToast("Gagal membaca atau memproses file JSON!");
+
+        } finally {
+            e.target.value = "";
         }
-        e.target.value = "";
     };
 
     reader.readAsText(file);

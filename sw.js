@@ -1,4 +1,4 @@
-const CACHE_NAME = 'v2.1.4-b16'
+const CACHE_NAME = 'v2.2-b17'
 
 const APP_SHELL = [
     './',
@@ -24,10 +24,6 @@ const APP_SHELL = [
     './components/input-page.html',
     './components/riwayat-page.html',
     './components/modals.html',
-
-    // Media
-    './sounds/success.mp3',
-    './sounds/click.mp3'
 ];
 
 // INSTALL: Pre-cache seluruh App Shell

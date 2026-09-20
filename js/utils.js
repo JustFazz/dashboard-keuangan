@@ -1,8 +1,3 @@
-const sounds = {
-    click: new Audio("./sounds/click.mp3"),
-    success: new Audio("./sounds/success.mp3"),
-};
-
 const toastQueue = [];
 let toastShowing = false;
 let wakeLock = null;
@@ -23,11 +18,51 @@ export function formatRupiah(number) {
     }).format(number);
 }
 
+let audioContext;
+let success;
+
+
 export function playSound(name) {
-    const sound = sounds[name];
-    if (!sound) return;
-    sound.currentTime = 0;
-    sound.play().catch(() => {});
+    if (!audioContext) {
+        audioContext = new AudioContext();
+    }
+
+    const now = audioContext.currentTime;
+    const osc = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+
+    osc.frequency.value = 2640;
+    osc.type = "sine";
+
+    gain.gain.setValueAtTime(0.9, now + 0.15);
+    gain.gain.exponentialRampToValueAtTime(
+        0.001,
+        now + 2
+    );
+
+    osc.connect(gain);
+    gain.connect(audioContext.destination);
+
+    osc.start();
+    osc.stop(audioContext.currentTime + 2.5);
+    
+    const osc1 = audioContext.createOscillator();
+    const gain1 = audioContext.createGain();
+
+    osc1.frequency.value = 2640;
+    osc1.type = "square";
+
+    gain1.gain.setValueAtTime(0.5, now);
+    gain1.gain.exponentialRampToValueAtTime(
+        0.001,
+        now + 0.5
+    );
+
+    osc1.connect(gain1);
+    gain1.connect(audioContext.destination);
+
+    osc1.start();
+    osc1.stop(now + 1);
 }
 
 export function showToast(message) {
