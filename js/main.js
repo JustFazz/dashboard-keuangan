@@ -49,6 +49,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     UI.updateDisplay();
     UI.displayVersion();
     await seedInitialDataIfEmpty();
+    setMode("Cash");
     UI.renderRecentTransactions();
     UI.renderHistory();
     keepScreenOn();

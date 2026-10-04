@@ -5,7 +5,7 @@ import {
     showToast,
     getTodayDateString,
 } from "./utils.js";
-import { dbAdd, dbGetAll, dbUpdate, dbDelete } from "./db.js";
+import { dbAdd, dbGetDate, dbGetId, dbUpdate, dbDelete } from "./db.js";
 import { addToSyncQueue, processPendingSyncQueue } from "./sync.js";
 
 // ==========================================================================
@@ -20,6 +20,8 @@ export function switchTab(tabName) {
 
     document.getElementById(isInput ? "tab-input-btn" : "tab-riwayat-btn").classList.add("active");
     document.getElementById(isInput ? "page-input" : "page-riwayat").classList.add("active");
+
+    //setMode("Open");
 }
 
 export function unlockApp() {
@@ -55,10 +57,17 @@ export function setSubTab(subTab) {
 
 export function setMode(mode) {
     state.currentMode = mode;
-    const lowerMode = mode.toLowerCase();
+    const lowerMode = mode !== "Open" ? mode.toLowerCase() : "cash";
 
     document.querySelectorAll(".mode-btn").forEach((btn) => btn.classList.remove("active"));
-    document.querySelector(`.${lowerMode}-mode`).classList.add("active");
+
+    if (mode === "Open") { 
+        document.getElementById("keypad").style.display = "none"; 
+    } else {
+        document.getElementById("keypad").style.display = "grid";
+        document.querySelector(`.${lowerMode}-mode`).classList.add("active");
+    }
+
     document.getElementById("active-mode-label").innerText = mode;
 
     document.getElementById("btn-save").className = `key-btn key-submit ${lowerMode}-mode`;
@@ -88,7 +97,7 @@ export async function displayVersion() {
     const APP_VERSION = firstLine
         .match(/["']([^"']+)["']/)?.[ 1 ];
 
-    document.getElementById("version").textContent = APP_VERSION;
+    document.getElementById("versions").textContent = APP_VERSION;
 }
 
 // ==========================================================================
@@ -179,8 +188,7 @@ export async function saveTransaction() {
 export async function deleteTransaction(id) {
     if (!confirm("Apakah Anda yakin ingin menghapus transaksi ini?")) return;
 
-    const transactions = await dbGetAll();
-    const data = transactions.find((tx) => tx.id === id);
+    const data = await dbGetId(id);
 
     if (!data) return showToast("Transaksi tidak ditemukan!");
 
@@ -199,100 +207,263 @@ export async function deleteTransaction(id) {
 export async function renderRecentTransactions() {
     const recentList = document.getElementById("recent-list");
     if (!recentList) return;
-    recentList.innerHTML = "";
+    const dateOnly = getTodayDateString();
 
-    const all = await dbGetAll();
+    const all = await dbGetDate(dateOnly);
     all.sort((a, b) => b.id - a.id);
+
     const items = all.slice(0, 3);
 
+    // Jika tidak ada data
     if (items.length === 0) {
-        recentList.innerHTML = '<div class="empty-state">Belum ada transaksi.</div>';
+        if (!recentList.querySelector(".empty-state")) {
+            recentList.innerHTML =
+                '<div class="empty-state">Belum ada transaksi.</div>';
+        }
         return;
     }
 
-    items.forEach((item) => {
+    // Hapus empty state jika sebelumnya ada
+    recentList.querySelector(".empty-state")?.remove();
+
+    const activeIds = new Set();
+
+    items.forEach((item, index) => {
+        activeIds.add(String(item.id));
+
+        let el = recentList.querySelector(
+            `.recent-item[data-id="${item.id}"]`
+        );
+
+        // Buat elemen hanya jika belum ada
+        if (!el) {
+            el = document.createElement("div");
+            el.className = "recent-item";
+            el.dataset.id = item.id;
+
+            el.innerHTML = `
+                <div class="left">
+                    <span class="type-badge"></span>
+                    <span class="item-note"></span>
+                </div>
+                <div class="right">
+                    <span class="item-amount"></span>
+                    <button class="btn-icon edit-btn" title="Edit">
+                        <i class="fa-solid fa-pen"></i>
+                    </button>
+                </div>
+            `;
+
+            recentList.appendChild(el);
+        }
+
         const displayType = getDisplayType(item);
-        const el = document.createElement("div");
-        el.className = "recent-item";
-        el.innerHTML = `
-            <div class="left">
-                <span class="type-badge ${displayType}">${displayType}</span>
-                <span>${item.note}</span>
-            </div>
-            <div class="right">
-                <span>${formatRupiah(item.amount)}</span>
-                <button class="btn-icon edit-btn" onclick="openEditModal(${item.id})" title="Edit">
-                    <i class="fa-solid fa-pen"></i>
-                </button>
-            </div>
-        `;
-        recentList.appendChild(el);
-    });
-}
 
-export async function renderHistory() {
-    const selectedDate = document.getElementById("history-date-picker").value;
-    const historyList = document.getElementById("history-list");
-    historyList.innerHTML = "";
+        // Update isi elemen yang sudah ada
+        const badge = el.querySelector(".type-badge");
+        const note = el.querySelector(".item-note");
+        const amount = el.querySelector(".item-amount");
+        const editButton = el.querySelector(".edit-btn");
 
-    const all = await dbGetAll();
-    const dateFiltered = all.filter((i) => i.dateOnly === selectedDate);
+        badge.className = `type-badge ${displayType}`;
+        badge.textContent = displayType;
 
-    let totalCash = 0, totalQris = 0, totalBank = 0, totalOut = 0;
-    dateFiltered.forEach((i) => {
-        if (i.type === "Cash") totalCash += i.amount;
-        else if (i.type === "Out") totalOut += i.amount;
-        else if (i.type === "Transfer") {
-            if (i.subType === "bank") totalBank += i.amount;
-            else totalQris += i.amount;
+        note.textContent = item.note;
+        amount.textContent = formatRupiah(item.amount);
+
+        editButton.onclick = () => openEditModal(item.id);
+
+        // Pastikan urutan sesuai index
+        const currentElement = recentList.children[ index ];
+
+        if (currentElement !== el) {
+            recentList.insertBefore(el, currentElement || null);
         }
     });
 
-    const totalPemasukan = totalCash + totalQris + totalBank;
-    const balance = totalCash - totalOut;
+    // Hapus transaksi yang sudah tidak masuk 3 terbaru
+    [ ...recentList.querySelectorAll(".recent-item") ].forEach((el) => {
+        if (!activeIds.has(el.dataset.id)) {
+            el.remove();
+        }
+    });
+}
 
-    document.getElementById("stat-total-pemasukan").innerText = formatRupiah(totalPemasukan);
-    document.getElementById("stat-total-cash").innerText = formatRupiah(totalCash);
-    document.getElementById("stat-total-qris").innerText = formatRupiah(totalQris);
-    document.getElementById("stat-total-bank").innerText = formatRupiah(totalBank);
-    document.getElementById("stat-total-out").innerText = formatRupiah(totalOut);
-    document.getElementById("stat-balance").innerText = formatRupiah(balance);
 
+export async function renderHistory() {
+    const selectedDate =
+        document.getElementById("history-date-picker").value;
+
+    const historyList = document.getElementById("history-list");
+
+    if (!historyList) return;
+
+    // Jangan kosongkan DOM di sini.
+    // Biarkan data lama tetap tampil selama DB sedang dibaca.
+    const all = await dbGetDate(selectedDate);
+
+    const dateFiltered = all.filter(
+        (i) => i.dateOnly === selectedDate
+    );
+
+    let totalCash = 0;
+    let totalQris = 0;
+    let totalBank = 0;
+    let totalOut = 0;
+
+    dateFiltered.forEach((i) => {
+        if (i.type === "Cash") {
+            totalCash += i.amount;
+        } else if (i.type === "Out") {
+            totalOut += i.amount;
+        } else if (i.type === "Transfer") {
+            if (i.subType === "bank") {
+                totalBank += i.amount;
+            } else {
+                totalQris += i.amount;
+            }
+        }
+    });
+
+    const totalPemasukan =
+        totalCash +
+        totalQris +
+        totalBank;
+
+    const balance =
+        totalCash -
+        totalOut;
+
+    // Update statistik
+    document.getElementById("stat-total-pemasukan").innerText =
+        formatRupiah(totalPemasukan);
+
+    document.getElementById("stat-total-cash").innerText =
+        formatRupiah(totalCash);
+
+    document.getElementById("stat-total-qris").innerText =
+        formatRupiah(totalQris);
+
+    document.getElementById("stat-total-bank").innerText =
+        formatRupiah(totalBank);
+
+    document.getElementById("stat-total-out").innerText =
+        formatRupiah(totalOut);
+
+    document.getElementById("stat-balance").innerText =
+        formatRupiah(balance);
+
+    document.getElementById("history-count").innerText =
+        `${dateFiltered.length} Catatan`;
+
+    // Jika tidak ada transaksi
     if (dateFiltered.length === 0) {
-        historyList.innerHTML = '<div class="empty-state">Tidak ada transaksi pada tanggal ini.</div>';
-        document.getElementById("history-count").innerText = "0 Catatan";
+        if (!historyList.querySelector(".empty-state")) {
+            historyList.innerHTML =
+                '<div class="empty-state">Tidak ada transaksi pada tanggal ini.</div>';
+        }
         return;
     }
 
-    dateFiltered.sort((a, b) => b.id - a.id);
-    dateFiltered.forEach((item) => {
-        const displayType = getDisplayType(item);
-        const el = document.createElement("div");
-        el.className = "history-item";
+    // Hapus empty state jika sebelumnya ada
+    historyList.querySelector(".empty-state")?.remove();
 
+    dateFiltered.sort((a, b) => b.id - a.id);
+
+    const activeIds = new Set();
+
+    dateFiltered.forEach((item, index) => {
+        activeIds.add(String(item.id));
+
+        let el = historyList.querySelector(
+            `.history-item[data-id="${item.id}"]`
+        );
+
+        // Buat elemen hanya jika belum ada
+        if (!el) {
+            el = document.createElement("div");
+            el.className = "history-item";
+            el.dataset.id = item.id;
+
+            el.innerHTML = `
+                <div class="item-main">
+                    <span class="type-badge"></span>
+
+                    <div class="item-details">
+                        <span class="item-amount"></span>
+                        <span class="item-note"></span>
+                    </div>
+                </div>
+
+                <div class="item-actions">
+                    <span class="item-time">
+                        <i class="fa-regular fa-clock"></i>
+                    </span>
+
+                    <button
+                        class="btn-icon edit-btn"
+                        title="Edit">
+                        <i class="fa-solid fa-pen"></i>
+                    </button>
+
+                    <button
+                        class="btn-icon delete-btn"
+                        title="Hapus">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
+                </div>
+            `;
+
+            historyList.appendChild(el);
+        }
+
+        const displayType = getDisplayType(item);
+
+        // Update data element
         el.dataset.type = item.type;
         el.dataset.subtype = item.subType || "";
 
-        el.innerHTML = `
-            <div class="item-main">
-                <span class="type-badge ${displayType}">${displayType}</span>
-                <div class="item-details">
-                    <span class="item-amount">${formatRupiah(item.amount)}</span>
-                    <span class="item-note">${item.note}</span>
-                </div>
-            </div>
-            <div class="item-actions">
-                <span class="item-time"><i class="fa-regular fa-clock"></i> ${item.timeOnly}</span>
-                <button class="btn-icon edit-btn" onclick="openEditModal(${item.id})"><i class="fa-solid fa-pen"></i></button>
-                <button class="btn-icon delete-btn" onclick="deleteTransaction(${item.id})" title="Hapus"><i class="fa-solid fa-trash"></i></button>
-            </div>
+        const badge = el.querySelector(".type-badge");
+        const amount = el.querySelector(".item-amount");
+        const note = el.querySelector(".item-note");
+        const time = el.querySelector(".item-time");
+        const editButton = el.querySelector(".edit-btn");
+        const deleteButton = el.querySelector(".delete-btn");
+
+        badge.className = `type-badge ${displayType}`;
+        badge.textContent = displayType;
+
+        amount.textContent = formatRupiah(item.amount);
+        note.textContent = item.note;
+
+        time.innerHTML = `
+            <i class="fa-regular fa-clock"></i>
+            ${item.timeOnly}
         `;
-        historyList.appendChild(el);
+
+        editButton.onclick = () => openEditModal(item.id);
+        deleteButton.onclick = () => deleteTransaction(item.id);
+
+        // Pertahankan urutan berdasarkan ID
+        const currentElement = historyList.children[ index ];
+
+        if (currentElement !== el) {
+            historyList.insertBefore(
+                el,
+                currentElement || null
+            );
+        }
+    });
+
+    // Hapus elemen yang sudah tidak ada dalam hasil query
+    [ ...historyList.querySelectorAll(".history-item") ].forEach((el) => {
+        if (!activeIds.has(el.dataset.id)) {
+            el.remove();
+        }
     });
 
     filterHistoryDOM();
 }
-
 export function filterHistoryDOM() {
     const historyList = document.getElementById("history-list");
     const items = historyList.querySelectorAll(".history-item");
@@ -337,8 +508,7 @@ export function filterHistoryDOM() {
 // ==========================================================================
 
 export async function openEditModal(id) {
-    const all = await dbGetAll();
-    const item = all.find((t) => t.id === id);
+    const item = await dbGetId(id);
     if (!item) return;
 
     const defaultNotes = [ "Pemasukan Cash", "Pemasukan QRIS", "Pemasukan Bank" ];
@@ -365,8 +535,7 @@ export async function handleEditSubmit(e) {
     const amount = parseInt(document.getElementById("edit-amount").value, 10);
     const note = document.getElementById("edit-keterangan").value.trim();
 
-    const all = await dbGetAll();
-    const existing = all.find((t) => t.id === id);
+    const existing = await dbGetId(id);
 
     if (existing) {
         if (selectedType.startsWith("Transfer-")) {

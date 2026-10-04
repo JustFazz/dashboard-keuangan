@@ -6,8 +6,23 @@ export function openDB() {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
         request.onupgradeneeded = (e) => {
             const db = e.target.result;
-            if (!db.objectStoreNames.contains(STORE_NAME)) {
-                db.createObjectStore(STORE_NAME, { keyPath: "id" });
+            let transactionStore;
+            if (db.objectStoreNames.contains(STORE_NAME)) {
+                transactionStore = event.target
+                    .transaction
+                    .objectStore(STORE_NAME);
+            } else {
+                transactionStore = db.createObjectStore(
+                    STORE_NAME, { keyPath: "id" }
+                );
+            }
+            // DATE INDEX
+            if (!transactionStore.indexNames.contains("dateOnly")) {
+                transactionStore.createIndex(
+                    "dateOnly",
+                    "dateOnly",
+                    { unique: false }
+                );
             }
             if (!db.objectStoreNames.contains(SYNC_QUEUE_STORE)) {
                 db.createObjectStore(SYNC_QUEUE_STORE, { keyPath: "queueId" });
@@ -35,6 +50,29 @@ export async function dbGetAll() {
         const tx = db.transaction(STORE_NAME, "readonly");
         const store = tx.objectStore(STORE_NAME);
         const req = store.getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = (e) => reject(e.target.error);
+    });
+}
+
+export async function dbGetDate(dateOnly) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const store = tx.objectStore(STORE_NAME);
+        const index = store.index("dateOnly");
+        const req = index.getAll(dateOnly);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = (e) => reject(e.target.error);
+    });
+}
+
+export async function dbGetId(id) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.get(id);
         req.onsuccess = () => resolve(req.result);
         req.onerror = (e) => reject(e.target.error);
     });

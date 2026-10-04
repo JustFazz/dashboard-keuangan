@@ -86,7 +86,10 @@
     <div class="card history-card">
         <div class="history-header">
             <h2>Daftar Transaksi</h2>
+            <div class="badge-count">
             <span class="badge-count" id="history-count">0 Catatan</span>
+            <i id="version" class="fa-solid fa-arrows-rotate btn-expand" ></i>
+            </div>
         </div>
         <div class="history-list" id="history-list"></div>
     </div>
@@ -103,7 +106,9 @@
                 <i class="fa-solid fa-upload"></i> Restore JSON
             </button>
             <input type="file" id="json-file-input" accept=".json,text/json,text/plain" style="display: none" onchange="importJSONRestore(event)" />
-            <div id="version" class="btn btn-outline-primary"></div>
+            <div class="btn">
+                <span id="versions"></span>
+            </div>
         </div>
     </div>
 </main>

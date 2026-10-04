@@ -131,6 +131,8 @@ export async function processPendingSyncQueue() {
     syncRunning = true;
 
     try {
+        syncSuccess = false;
+        document.getElementById("version").style.color = syncSuccess ? "#3b82f6" : "#000000";
         while (true) {
             const pendingQueue = (await getPendingSyncQueue())
                 .sort((a, b) => a.createdAt - b.createdAt);
@@ -164,7 +166,7 @@ export async function processPendingSyncQueue() {
 
     } finally {
         syncRunning = false;
-        showToast("Sync " + (syncSuccess ? "Selesai" : "Pending"))
+        document.getElementById("version").style.color = syncSuccess ? "#3b82f6" : "#000000";
     }
 }
 

@@ -708,6 +708,11 @@ body {
     align-items: center;
 }
 
+.btn-expand {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+}
 .btn-icon {
     border: none;
     background: transparent;
