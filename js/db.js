@@ -1,127 +1,211 @@
-import { DB_NAME, DB_VERSION, STORE_NAME, SYNC_QUEUE_STORE } from "./config.js";
-import { getTodayDateString } from "./utils.js";
+/**
+ * Modul IndexedDB - Monitoring Toko (HP2)
+ * Bertanggung jawab penuh atas penyimpanan dan pemanggilan data lokal.
+ */
 
-export function openDB() {
+/**
+ * Membuka koneksi ke IndexedDB dan membuat struktur database jika belum ada.
+ * @returns {Promise<IDBDatabase>}
+ */
+function openDB() {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open(DB_NAME, DB_VERSION);
-        request.onupgradeneeded = (e) => {
-            const db = e.target.result;
-            let transactionStore;
-            if (db.objectStoreNames.contains(STORE_NAME)) {
-                transactionStore = event.target
-                    .transaction
-                    .objectStore(STORE_NAME);
-            } else {
-                transactionStore = db.createObjectStore(
-                    STORE_NAME, { keyPath: "id" }
-                );
+        const request = indexedDB.open(APP_CONFIG.DB_NAME, APP_CONFIG.DB_VERSION);
+
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+
+            // Store 1: transactions (keyPath: "id", index: "dateOnly")
+            if (!db.objectStoreNames.contains("transactions")) {
+                const txStore = db.createObjectStore("transactions", { keyPath: "id" });
+                txStore.createIndex("dateOnly", "dateOnly", { unique: false });
             }
-            // DATE INDEX
-            if (!transactionStore.indexNames.contains("dateOnly")) {
-                transactionStore.createIndex(
-                    "dateOnly",
-                    "dateOnly",
-                    { unique: false }
-                );
-            }
-            if (!db.objectStoreNames.contains(SYNC_QUEUE_STORE)) {
-                db.createObjectStore(SYNC_QUEUE_STORE, { keyPath: "queueId" });
+
+            // Store 2: syncMetadata (keyPath: "date")
+            if (!db.objectStoreNames.contains("syncMetadata")) {
+                db.createObjectStore("syncMetadata", { keyPath: "date" });
             }
         };
-        request.onsuccess = (e) => resolve(e.target.result);
-        request.onerror = (e) => reject(e.target.error);
+
+        request.onsuccess = (event) => {
+            resolve(event.target.result);
+        };
+
+        request.onerror = (event) => {
+            reject("Gagal membuka IndexedDB: " + event.target.error);
+        };
     });
 }
 
-export async function dbAdd(data) {
+/**
+ * Membaca seluruh transaksi lokal berdasarkan tanggal tertentu (YYYY-MM-DD).
+ * @param {string} dateOnly - Tanggal format "YYYY-MM-DD"
+ * @returns {Promise<Array>} Array objek transaksi
+ */
+async function getLocalTransactionsByDate(dateOnly) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readwrite");
-        const store = tx.objectStore(STORE_NAME);
-        const req = store.add(data);
-        req.onsuccess = () => resolve();
-        req.onerror = (e) => reject(e.target.error);
-    });
-}
-
-export async function dbGetAll() {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readonly");
-        const store = tx.objectStore(STORE_NAME);
-        const req = store.getAll();
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = (e) => reject(e.target.error);
-    });
-}
-
-export async function dbGetDate(dateOnly) {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readonly");
-        const store = tx.objectStore(STORE_NAME);
+        const tx = db.transaction("transactions", "readonly");
+        const store = tx.objectStore("transactions");
         const index = store.index("dateOnly");
-        const req = index.getAll(dateOnly);
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = (e) => reject(e.target.error);
+        const request = index.getAll(dateOnly);
+
+        request.onsuccess = () => resolve(request.result || []);
+        request.onerror = (e) => reject("Gagal mengambil transaksi tanggal " + dateOnly + ": " + e.target.error);
     });
 }
 
-export async function dbGetId(id) {
+/**
+ * Membaca seluruh transaksi lokal dalam satu bulan (YYYY-MM).
+ * @param {string} yearMonth - Format "YYYY-MM"
+ * @returns {Promise<Array>} Array objek transaksi dalam bulan tersebut
+ */
+async function getLocalTransactionsByMonth(yearMonth) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readonly");
-        const store = tx.objectStore(STORE_NAME);
-        const req = store.get(id);
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = (e) => reject(e.target.error);
+        const tx = db.transaction("transactions", "readonly");
+        const store = tx.objectStore("transactions");
+        const request = store.openCursor();
+        const results = [];
+
+        request.onsuccess = (event) => {
+            const cursor = event.target.result;
+            if (cursor) {
+                if (cursor.value.dateOnly && cursor.value.dateOnly.startsWith(yearMonth)) {
+                    results.push(cursor.value);
+                }
+                cursor.continue();
+            } else {
+                resolve(results);
+            }
+        };
+
+        request.onerror = (e) => reject("Gagal mengambil transaksi bulan " + yearMonth + ": " + e.target.error);
     });
 }
 
-export async function dbUpdate(data) {
+/**
+ * Mengganti secara utuh data transaksi lokal pada tanggal tertentu.
+ * Menghapus transaksi lama pada tanggal tersebut lalu menyimpan data transaksi baru.
+ * @param {string} dateOnly - Tanggal format "YYYY-MM-DD"
+ * @param {Array} transactionsArray - Array objek transaksi baru dari Firebase
+ * @returns {Promise<void>}
+ */
+async function replaceLocalTransactionsByDate(dateOnly, transactionsArray) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readwrite");
-        const store = tx.objectStore(STORE_NAME);
-        const req = store.put(data);
-        req.onsuccess = () => resolve();
-        req.onerror = (e) => reject(e.target.error);
+        const tx = db.transaction("transactions", "readwrite");
+        const store = tx.objectStore("transactions");
+        const index = store.index("dateOnly");
+        const request = index.getAllKeys(dateOnly);
+
+        request.onsuccess = () => {
+            const keysToDelete = request.result || [];
+            
+            // 1. Hapus semua record transaksi lama untuk tanggal ini
+            keysToDelete.forEach((key) => store.delete(key));
+
+            // 2. Simpan record transaksi baru jika ada
+            if (Array.isArray(transactionsArray)) {
+                transactionsArray.forEach((item) => {
+                    store.put({
+                        id: item.id,
+                        type: item.type,
+                        subType: item.subType || null,
+                        amount: Number(item.amount) || 0,
+                        note: item.note || "",
+                        dateOnly: item.dateOnly,
+                        timeOnly: item.timeOnly,
+                        verified: Boolean(item.verified)
+                    });
+                });
+            }
+        };
+
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject("Gagal memperbarui transaksi lokal: " + e.target.error);
     });
 }
 
-export async function dbDelete(id) {
+/**
+ * Membaca metadata sinkronisasi lokal untuk tanggal tertentu.
+ * @param {string} dateOnly - Tanggal format "YYYY-MM-DD"
+ * @returns {Promise<Object|null>} Object metadata { date, version, syncedAt } atau null jika belum pernah disinkronkan
+ */
+async function getLocalSyncMetadata(dateOnly) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readwrite");
-        const store = tx.objectStore(STORE_NAME);
-        const req = store.delete(id);
-        req.onsuccess = () => resolve();
-        req.onerror = (e) => reject(e.target.error);
+        const tx = db.transaction("syncMetadata", "readonly");
+        const store = tx.objectStore("syncMetadata");
+        const request = store.get(dateOnly);
+
+        request.onsuccess = () => resolve(request.result || null);
+        request.onerror = (e) => reject("Gagal mengambil metadata lokal: " + e.target.error);
     });
 }
 
-export async function dbClear() {
+/**
+ * Menyimpan atau memperbarui data metadata sinkronisasi lokal.
+ * @param {Object} metadataObj - Object { date: "YYYY-MM-DD", version: number, syncedAt: timestamp }
+ * @returns {Promise<void>}
+ */
+async function saveLocalSyncMetadata(metadataObj) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readwrite");
-        const store = tx.objectStore(STORE_NAME);
-        const req = store.clear();
-        req.onsuccess = () => resolve();
-        req.onerror = (e) => reject(e.target.error);
+        const tx = db.transaction("syncMetadata", "readwrite");
+        const store = tx.objectStore("syncMetadata");
+        const request = store.put({
+            date: metadataObj.date,
+            version: metadataObj.version,
+            syncedAt: metadataObj.syncedAt || Date.now()
+        });
+
+        request.onsuccess = () => resolve();
+        request.onerror = (e) => reject("Gagal menyimpan metadata lokal: " + e.target.error);
     });
 }
 
-export async function seedInitialDataIfEmpty() {
-    const items = await dbGetAll();
-    if (items.length === 0) {
-        const today = getTodayDateString();
-        const sampleData = [
-            { id: 1, type: "Cash", amount: 100000, note: "Modal awal", dateOnly: today, timeOnly: "08:30", verified: false },
-            { id: 2, type: "Transfer", amount: 250000, note: "Transfer masuk", dateOnly: today, timeOnly: "09:15", verified: true },
-            { id: 3, type: "Out", amount: 35000, note: "Makan Siang", dateOnly: today, timeOnly: "12:00", verified: false },
-        ];
-        for (const item of sampleData) {
-            await dbAdd(item);
-        }
-    }
+async function getTransactionsForRange(dates) {
+    const months = [
+        ...new Set(
+            dates.map(date => date.slice(0, 7))
+        )
+    ];
+
+    const results = await Promise.all(
+        months.map(month =>
+            getLocalTransactionsByMonth(month)
+        )
+    );
+
+    return results.flat().filter(transaction =>
+        dates.includes(transaction.dateOnly)
+    );
+}
+async function getLocalTransactionsByDateRange(startDate, endDate) {
+    const db = await openDB();
+
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction("transactions", "readonly");
+        const store = tx.objectStore("transactions");
+        const index = store.index("dateOnly");
+
+        const range = IDBKeyRange.bound(
+            startDate,
+            endDate
+        );
+
+        const request = index.getAll(range);
+
+        request.onsuccess = () => {
+            resolve(request.result || []);
+        };
+
+        request.onerror = (e) => {
+            reject(
+                "Gagal mengambil transaksi " +
+                `${startDate} sampai ${endDate}: ` +
+                e.target.error
+            );
+        };
+    });
 }

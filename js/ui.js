@@ -1,592 +1,316 @@
-import { state } from "./config.js";
-import {
-    formatRupiah,
-    playSound,
-    showToast,
-    getTodayDateString,
-} from "./utils.js";
-import { dbAdd, dbGetDate, dbGetId, dbUpdate, dbDelete } from "./db.js";
-import { addToSyncQueue, processPendingSyncQueue } from "./sync.js";
+/**
+ * Modul UI - Monitoring Toko (HP2)
+ * Bertanggung jawab atas manipulasi DOM, rendering data, dan manajemen navigasi.
+ */
 
-// ==========================================================================
-// 1. NAVIGASI TAB & MODE
-// ==========================================================================
+/**
+ * Mengontrol visibilitas antara layar Login dan Layar Dashboard Utama.
+ * @param {string} viewName - "login" atau "dashboard"
+ */
+function showView(viewName) {
+    const loginView = document.getElementById("login-view");
+    const dashboardView = document.getElementById("dashboard-view");
 
-export function switchTab(tabName) {
-    const isInput = tabName === "input";
-
-    document.querySelectorAll(".tab-btn").forEach((btn) => btn.classList.remove("active"));
-    document.querySelectorAll(".page-content").forEach((page) => page.classList.remove("active"));
-
-    document.getElementById(isInput ? "tab-input-btn" : "tab-riwayat-btn").classList.add("active");
-    document.getElementById(isInput ? "page-input" : "page-riwayat").classList.add("active");
-
-    //setMode("Open");
-}
-
-export function unlockApp() {
-    const inputEl = document.getElementById("app-pin-input");
-    if (inputEl.value === state.appPin) {
-        document.getElementById("app-lock-screen").style.display = "none";
-        inputEl.value = "";
-        showToast("Aplikasi Berhasil Dibuka");
-    } else {
-        showToast("PIN Salah!");
-        inputEl.value = "";
+    if (viewName === "login") {
+        loginView.classList.remove("hidden");
+        dashboardView.classList.add("hidden");
+    } else if (viewName === "dashboard") {
+        loginView.classList.add("hidden");
+        dashboardView.classList.remove("hidden");
     }
 }
 
-export function setSubTab(subTab) {
-    state.currentSubTab = subTab;
-    document.querySelectorAll(".sub-tab-btn").forEach((btn) => btn.classList.remove("active"));
-
-    const subTabMap = {
-        all: "subtab-all",
-        Cash: "subtab-cash",
-        QRIS: "subtab-qris",
-        Bank: "subtab-bank",
-        Out: "subtab-out",
-    };
-
-    if (subTabMap[ subTab ]) {
-        document.getElementById(subTabMap[ subTab ]).classList.add("active");
-    }
-
-    filterHistoryDOM();
-}
-
-export function setMode(mode) {
-    state.currentMode = mode;
-    const lowerMode = mode !== "Open" ? mode.toLowerCase() : "cash";
-
-    document.querySelectorAll(".mode-btn").forEach((btn) => btn.classList.remove("active"));
-
-    if (mode === "Open") { 
-        document.getElementById("keypad").style.display = "none"; 
-    } else {
-        document.getElementById("keypad").style.display = "grid";
-        document.querySelector(`.${lowerMode}-mode`).classList.add("active");
-    }
-
-    document.getElementById("active-mode-label").innerText = mode;
-
-    document.getElementById("btn-save").className = `key-btn key-submit ${lowerMode}-mode`;
-
-    const ketGroup = document.getElementById("group-keterangan");
-    const isOut = mode === "Out";
-    ketGroup.style.display = isOut ? "flex" : "none";
-    if (!isOut) document.getElementById("input-keterangan").value = "";
-
-    const transferTypeGroup = document.getElementById("group-transfer-type");
-    const isTransfer = mode === "Transfer";
-    transferTypeGroup.style.display = isTransfer ? "grid" : "none";
-    if (isTransfer) setTransferType("qris");
-}
-
-export function setTransferType(type) {
-    state.currentTransferType = type;
-    document.getElementById("btn-transfer-qris").classList.toggle("active", type === "qris");
-    document.getElementById("btn-transfer-bank").classList.toggle("active", type === "bank");
-}
-export async function displayVersion() {
-    const response = await fetch("./sw.js");
-    const text = await response.text();
-
-    const firstLine = text.split(/\r?\n/)[ 0 ];
-
-    const APP_VERSION = firstLine
-        .match(/["']([^"']+)["']/)?.[ 1 ];
-
-    document.getElementById("versions").textContent = APP_VERSION;
-}
-
-// ==========================================================================
-// 2. KEYPAD & DISPLAY LOGIC
-// ==========================================================================
-
-export function pressKey(key) {
-    if (key === "C") {
-        state.rawAmount = "0";
-    } else if (key === "BACK") {
-        state.rawAmount = state.rawAmount.length > 1 ? state.rawAmount.slice(0, -1) : "0";
-    } else if (key === "00") {
-        if (state.rawAmount !== "0") state.rawAmount += "00";
-    } else {
-        if (state.rawAmount === "0") {
-            state.rawAmount = key;
-        } else if (state.rawAmount.length < 12) {
-            state.rawAmount += key;
+/**
+ * Berpindah tab navigasi pada dashboard (Hari Ini / Ringkasan Bulan / Transaksi per Tanggal).
+ * @param {string} tabName - "today", "month", atau "date"
+ */
+function setActiveTab(tabName) {
+    // 1. Update tombol navigasi
+    const navButtons = document.querySelectorAll(".nav-pill");
+    navButtons.forEach((btn) => {
+        if (btn.getAttribute("data-tab") === tabName) {
+            btn.classList.add("active");
+        } else {
+            btn.classList.remove("active");
         }
-    }
-    updateDisplay();
-}
+    });
 
-export function updateDisplay() {
-    const val = parseInt(state.rawAmount, 10) || 0;
-    document.getElementById("display-amount").innerText = formatRupiah(val);
-}
-
-export function getDisplayType(item) {
-    if (item.type === "Transfer") {
-        return item.subType === "bank" ? "Bank" : "QRIS";
-    }
-    return item.type;
-}
-
-// ==========================================================================
-// 3. OLAH & SIMPAN TRANSAKSI
-// ==========================================================================
-
-export async function saveTransaction() {
-    const amount = parseInt(state.rawAmount, 10);
-    if (!amount || amount <= 0) return showToast("Nominal transaksi tidak valid!");
-
-    const noteInput = document.getElementById("input-keterangan").value.trim();
-    let note = noteInput;
-
-    if (state.currentMode === "Out" && !note) {
-        return showToast("Harap isi keterangan pengeluaran!");
-    }
-
-    if (!note) {
-        if (state.currentMode === "Cash") note = "Pemasukan Cash";
-        else if (state.currentMode === "Transfer") {
-            note = state.currentTransferType === "qris" ? "Pemasukan QRIS" : "Pemasukan Bank";
+    // 2. Update visibilitas seksi tab
+    const tabContents = document.querySelectorAll(".tab-content");
+    tabContents.forEach((content) => {
+        if (content.id === `tab-${tabName}`) {
+            content.classList.remove("hidden");
+            content.classList.add("active");
+        } else {
+            content.classList.add("hidden");
+            content.classList.remove("active");
         }
+    });
+}
+
+/**
+ * Memperbarui pesan dan status visual pada Status Bar Sinkronisasi.
+ * @param {string} message - Pesan teks status
+ * @param {string} type - 'normal' | 'updating' | 'offline'
+ */
+function updateSyncStatus(message, type = "normal") {
+    const statusBar = document.getElementById("sync-status-bar");
+    const statusText = document.getElementById("sync-status-text");
+
+    if (!statusBar || !statusText) return;
+
+    statusText.textContent = message;
+
+    // Reset class status
+    statusBar.className = "sync-status";
+
+    if (type === "updating") {
+        statusBar.classList.add("updating");
+    } else if (type === "offline") {
+        statusBar.classList.add("offline");
+    }
+}
+
+/**
+ * Mengisi 6 indikator ringkasan pada halaman Hari Ini.
+ * @param {Object} summary - Objek hasil calculateSummary()
+ * @param {string} dateFormattedText - Tanggal header (contoh: "Hari Ini (22/09/2026)")
+ */
+function renderTodaySummary(summary, dateFormattedText) {
+    if (dateFormattedText) {
+        const heading = document.getElementById("today-date-heading");
+        if (heading) heading.textContent = dateFormattedText;
     }
 
-    const now = new Date();
-    const dateOnly = getTodayDateString();
-    const timeOnly = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-
-    const data = {
-        id: Date.now(),
-        type: state.currentMode,
-        subType: state.currentMode === "Transfer" ? state.currentTransferType : null,
-        amount: amount,
-        note: note,
-        dateOnly: dateOnly,
-        timeOnly: timeOnly,
-        verified: false,
-    };
-
-    await dbAdd(data);
-    await addToSyncQueue("create", data.id, data);
-    processPendingSyncQueue();
-    state.rawAmount = "0";
-    updateDisplay();
-    document.getElementById("input-keterangan").value = "";
-
-    await renderRecentTransactions();
-    await renderHistory();
-
-    playSound("success");
-    setMode("Cash");
-    showToast("Transaksi berhasil disimpan!");
+    document.getElementById("today-total").textContent = formatRupiah(summary.totalOmzet);
+    document.getElementById("today-cash").textContent = formatRupiah(summary.totalCash);
+    document.getElementById("today-qris").textContent = formatRupiah(summary.totalQris);
+    document.getElementById("today-bank").textContent = formatRupiah(summary.totalBank);
+    document.getElementById("today-out").textContent = formatRupiah(summary.totalOut);
+    document.getElementById("today-sisa-cash").textContent = formatRupiah(summary.sisaCash);
 }
 
-export async function deleteTransaction(id) {
-    if (!confirm("Apakah Anda yakin ingin menghapus transaksi ini?")) return;
-
-    const data = await dbGetId(id);
-
-    if (!data) return showToast("Transaksi tidak ditemukan!");
-
-    await addToSyncQueue("delete", data.id, data);
-    await dbDelete(id);
-    processPendingSyncQueue();
-    await renderRecentTransactions();
-    await renderHistory();
-    showToast("Transaksi berhasil dihapus");
+/**
+ * Mengisi 4 indikator ringkasan pada halaman Ringkasan Bulan (Total Omzet, Cash, QRIS, Bank).
+ * @param {Object} summary - Objek hasil calculateSummary()
+ */
+function renderMonthSummary(summary) {
+    document.getElementById("month-total").textContent = formatRupiah(summary.totalOmzet);
+    document.getElementById("month-cash").textContent = formatRupiah(summary.totalCash);
+    document.getElementById("month-qris").textContent = formatRupiah(summary.totalQris);
+    document.getElementById("month-bank").textContent = formatRupiah(summary.totalBank);
 }
 
-// ==========================================================================
-// 4. RENDER & FILTER UI
-// ==========================================================================
+/**
+ * Mengisi 6 indikator ringkasan pada halaman Transaksi per Tanggal.
+ * @param {Object} summary - Objek hasil calculateSummary()
+ */
+function renderDateSummary(summary) {
+    document.getElementById("date-total").textContent = formatRupiah(summary.totalOmzet);
+    document.getElementById("date-cash").textContent = formatRupiah(summary.totalCash);
+    document.getElementById("date-qris").textContent = formatRupiah(summary.totalQris);
+    document.getElementById("date-bank").textContent = formatRupiah(summary.totalBank);
+    document.getElementById("date-out").textContent = formatRupiah(summary.totalOut);
+    document.getElementById("date-sisa-cash").textContent = formatRupiah(summary.sisaCash);
 
-export async function renderRecentTransactions() {
-    const recentList = document.getElementById("recent-list");
-    if (!recentList) return;
-    const dateOnly = getTodayDateString();
+    const countBadge = document.getElementById("date-count-badge");
+    if (countBadge) {
+        countBadge.textContent = `${summary.count} Catatan`;
+    }
+}
 
-    const all = await dbGetDate(dateOnly);
-    all.sort((a, b) => b.id - a.id);
+/**
+ * Merender daftar item transaksi pada elemen #transaction-list.
+ * Transaksi diurutkan berdasarkan jam (terbaru di paling atas).
+ * @param {Array} transactions - Array objek transaksi
+ */
+function renderTransactionList(transactions) {
+    const listContainer = document.getElementById("transaction-list");
+    if (!listContainer) return;
 
-    const items = all.slice(0, 3);
-
-    // Jika tidak ada data
-    if (items.length === 0) {
-        if (!recentList.querySelector(".empty-state")) {
-            recentList.innerHTML =
-                '<div class="empty-state">Belum ada transaksi.</div>';
-        }
+    if (!Array.isArray(transactions) || transactions.length === 0) {
+        listContainer.innerHTML = '<p class="empty-state">Tidak ada transaksi pada tanggal ini.</p>';
         return;
     }
 
-    // Hapus empty state jika sebelumnya ada
-    recentList.querySelector(".empty-state")?.remove();
-
-    const activeIds = new Set();
-
-    items.forEach((item, index) => {
-        activeIds.add(String(item.id));
-
-        let el = recentList.querySelector(
-            `.recent-item[data-id="${item.id}"]`
-        );
-
-        // Buat elemen hanya jika belum ada
-        if (!el) {
-            el = document.createElement("div");
-            el.className = "recent-item";
-            el.dataset.id = item.id;
-
-            el.innerHTML = `
-                <div class="left">
-                    <span class="type-badge"></span>
-                    <span class="item-note"></span>
-                </div>
-                <div class="right">
-                    <span class="item-amount"></span>
-                    <button class="btn-icon edit-btn" title="Edit">
-                        <i class="fa-solid fa-pen"></i>
-                    </button>
-                </div>
-            `;
-
-            recentList.appendChild(el);
-        }
-
-        const displayType = getDisplayType(item);
-
-        // Update isi elemen yang sudah ada
-        const badge = el.querySelector(".type-badge");
-        const note = el.querySelector(".item-note");
-        const amount = el.querySelector(".item-amount");
-        const editButton = el.querySelector(".edit-btn");
-
-        badge.className = `type-badge ${displayType}`;
-        badge.textContent = displayType;
-
-        note.textContent = item.note;
-        amount.textContent = formatRupiah(item.amount);
-
-        editButton.onclick = () => openEditModal(item.id);
-
-        // Pastikan urutan sesuai index
-        const currentElement = recentList.children[ index ];
-
-        if (currentElement !== el) {
-            recentList.insertBefore(el, currentElement || null);
-        }
+    // Urutkan transaksi dari jam terbaru ke terlama
+    const sortedList = [...transactions].sort((a, b) => {
+        const timeA = a.timeOnly || "";
+        const timeB = b.timeOnly || "";
+        return timeB.localeCompare(timeA);
     });
 
-    // Hapus transaksi yang sudah tidak masuk 3 terbaru
-    [ ...recentList.querySelectorAll(".recent-item") ].forEach((el) => {
-        if (!activeIds.has(el.dataset.id)) {
-            el.remove();
-        }
+    let html = "";
+
+    sortedList.forEach((tx) => {
+        const typeInfo = formatTransactionType(tx);
+        const formattedAmount = formatRupiah(tx.amount);
+        const formattedTime = formatTime(tx.timeOnly);
+        const noteText = tx.note ? tx.note : "-";
+
+        html += `
+            <div class="tx-item">
+                <div class="tx-left-group">
+                    <span class="tx-badge ${typeInfo.category}">${typeInfo.label}</span>
+                    <div class="tx-info">
+                        <span class="tx-amount">${formattedAmount}</span>
+                        <span class="tx-note">${escapeHtml(noteText)}</span>
+                    </div>
+                </div>
+                <div class="tx-right-group">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span>${formattedTime}</span>
+                </div>
+            </div>
+        `;
     });
+
+    listContainer.innerHTML = html;
 }
 
+/**
+ * Helper untuk mencegah serangan Cross-Site Scripting (XSS) pada input catatan transaksi.
+ * @param {string} str 
+ * @returns {string}
+ */
+function escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
 
-export async function renderHistory() {
-    const selectedDate =
-        document.getElementById("history-date-picker").value;
-
-    const historyList = document.getElementById("history-list");
-
-    if (!historyList) return;
-
-    // Jangan kosongkan DOM di sini.
-    // Biarkan data lama tetap tampil selama DB sedang dibaca.
-    const all = await dbGetDate(selectedDate);
-
-    const dateFiltered = all.filter(
-        (i) => i.dateOnly === selectedDate
-    );
-
-    let totalCash = 0;
-    let totalQris = 0;
-    let totalBank = 0;
-    let totalOut = 0;
-
-    dateFiltered.forEach((i) => {
-        if (i.type === "Cash") {
-            totalCash += i.amount;
-        } else if (i.type === "Out") {
-            totalOut += i.amount;
-        } else if (i.type === "Transfer") {
-            if (i.subType === "bank") {
-                totalBank += i.amount;
-            } else {
-                totalQris += i.amount;
+function createSalesChart(canvasId, data) {
+    const canvas = document.getElementById(canvasId);
+    return new Chart(canvas, {
+        type: "line",
+        data: {
+            labels: data.map(item => item.label),
+            datasets: [{
+                data: data.map(item => item.total),
+                tension: 0.4,
+                fill: true,
+                pointRadius: 3,
+                pointHoverRadius: 5
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
             }
         }
     });
+}
+async function getPerformanceData() {
+    const todayDate = new Date();
+    const todayString = formatDate(todayDate);
 
-    const totalPemasukan =
-        totalCash +
-        totalQris +
-        totalBank;
 
-    const balance =
-        totalCash -
-        totalOut;
+    // =========================
+    // HARI INI
+    // =========================
 
-    // Update statistik
-    document.getElementById("stat-total-pemasukan").innerText =
-        formatRupiah(totalPemasukan);
-
-    document.getElementById("stat-total-cash").innerText =
-        formatRupiah(totalCash);
-
-    document.getElementById("stat-total-qris").innerText =
-        formatRupiah(totalQris);
-
-    document.getElementById("stat-total-bank").innerText =
-        formatRupiah(totalBank);
-
-    document.getElementById("stat-total-out").innerText =
-        formatRupiah(totalOut);
-
-    document.getElementById("stat-balance").innerText =
-        formatRupiah(balance);
-
-    document.getElementById("history-count").innerText =
-        `${dateFiltered.length} Catatan`;
-
-    // Jika tidak ada transaksi
-    if (dateFiltered.length === 0) {
-        if (!historyList.querySelector(".empty-state")) {
-            historyList.innerHTML =
-                '<div class="empty-state">Tidak ada transaksi pada tanggal ini.</div>';
-        }
-        return;
-    }
-
-    // Hapus empty state jika sebelumnya ada
-    historyList.querySelector(".empty-state")?.remove();
-
-    dateFiltered.sort((a, b) => b.id - a.id);
-
-    const activeIds = new Set();
-
-    dateFiltered.forEach((item, index) => {
-        activeIds.add(String(item.id));
-
-        let el = historyList.querySelector(
-            `.history-item[data-id="${item.id}"]`
+    const todayTransactions =
+        await getLocalTransactionsByDate(
+            todayString
         );
 
-        // Buat elemen hanya jika belum ada
-        if (!el) {
-            el = document.createElement("div");
-            el.className = "history-item";
-            el.dataset.id = item.id;
+    const todayData = fillMissingHours(
+        aggregateByHour(todayTransactions)
+    );
 
-            el.innerHTML = `
-                <div class="item-main">
-                    <span class="type-badge"></span>
 
-                    <div class="item-details">
-                        <span class="item-amount"></span>
-                        <span class="item-note"></span>
-                    </div>
-                </div>
+    // =========================
+    // 7 HARI
+    // =========================
 
-                <div class="item-actions">
-                    <span class="item-time">
-                        <i class="fa-regular fa-clock"></i>
-                    </span>
+    const last7Dates = getDateRange(7);
 
-                    <button
-                        class="btn-icon edit-btn"
-                        title="Edit">
-                        <i class="fa-solid fa-pen"></i>
-                    </button>
+    const last7Range =
+        getDateRangeBounds(7);
 
-                    <button
-                        class="btn-icon delete-btn"
-                        title="Hapus">
-                        <i class="fa-solid fa-trash"></i>
-                    </button>
-                </div>
-            `;
+    const last7Transactions =
+        await getLocalTransactionsByDateRange(
+            last7Range.startDate,
+            last7Range.endDate
+        );
 
-            historyList.appendChild(el);
-        }
+    const last7Data = fillMissingDates(
+        last7Dates,
+        aggregateByDate(last7Transactions)
+    );
 
-        const displayType = getDisplayType(item);
 
-        // Update data element
-        el.dataset.type = item.type;
-        el.dataset.subtype = item.subType || "";
+    // =========================
+    // 30 HARI
+    // =========================
 
-        const badge = el.querySelector(".type-badge");
-        const amount = el.querySelector(".item-amount");
-        const note = el.querySelector(".item-note");
-        const time = el.querySelector(".item-time");
-        const editButton = el.querySelector(".edit-btn");
-        const deleteButton = el.querySelector(".delete-btn");
+    const last30Dates = getDateRange(30);
 
-        badge.className = `type-badge ${displayType}`;
-        badge.textContent = displayType;
+    const last30Range =
+        getDateRangeBounds(30);
 
-        amount.textContent = formatRupiah(item.amount);
-        note.textContent = item.note;
+    const last30Transactions =
+        await getLocalTransactionsByDateRange(
+            last30Range.startDate,
+            last30Range.endDate
+        );
 
-        time.innerHTML = `
-            <i class="fa-regular fa-clock"></i>
-            ${item.timeOnly}
-        `;
+    const last30Data = fillMissingDates(
+        last30Dates,
+        aggregateByDate(last30Transactions)
+    );
 
-        editButton.onclick = () => openEditModal(item.id);
-        deleteButton.onclick = () => deleteTransaction(item.id);
 
-        // Pertahankan urutan berdasarkan ID
-        const currentElement = historyList.children[ index ];
+    return {
+        today: todayData,
 
-        if (currentElement !== el) {
-            historyList.insertBefore(
-                el,
-                currentElement || null
-            );
-        }
-    });
+        last7Days: formatDateLabels(
+            last7Data
+        ),
 
-    // Hapus elemen yang sudah tidak ada dalam hasil query
-    [ ...historyList.querySelectorAll(".history-item") ].forEach((el) => {
-        if (!activeIds.has(el.dataset.id)) {
-            el.remove();
-        }
-    });
-
-    filterHistoryDOM();
-}
-export function filterHistoryDOM() {
-    const historyList = document.getElementById("history-list");
-    const items = historyList.querySelectorAll(".history-item");
-    let visibleCount = 0;
-
-    items.forEach((el) => {
-        const { type, subtype: subType } = el.dataset;
-
-        let shouldShow = false;
-        if (state.currentSubTab === "all") shouldShow = true;
-        else if (state.currentSubTab === "Cash") shouldShow = type === "Cash";
-        else if (state.currentSubTab === "Out") shouldShow = type === "Out";
-        else if (state.currentSubTab === "QRIS") shouldShow = type === "Transfer" && (subType === "qris" || subType === "");
-        else if (state.currentSubTab === "Bank") shouldShow = type === "Transfer" && subType === "bank";
-
-        if (shouldShow) {
-            el.style.display = "";
-            visibleCount++;
-        } else {
-            el.style.display = "none";
-        }
-    });
-
-    document.getElementById("history-count").innerText = `${visibleCount} Catatan`;
-
-    let emptyState = historyList.querySelector(".empty-state-subtab");
-    if (visibleCount === 0 && items.length > 0) {
-        if (!emptyState) {
-            emptyState = document.createElement("div");
-            emptyState.className = "empty-state empty-state-subtab";
-            emptyState.innerText = "Tidak ada transaksi pada sub-tab ini.";
-            historyList.appendChild(emptyState);
-        }
-        emptyState.style.display = "";
-    } else if (emptyState) {
-        emptyState.style.display = "none";
+        last30Days: formatDateLabels(
+            last30Data
+        )
+    };
+}function renderPerformanceCharts(performance) {
+    // Hapus chart lama jika fungsi dipanggil ulang
+    if (todayChart) {
+    //    todayChart.destroy();
     }
-}
 
-// ==========================================================================
-// 5. MANAJEMEN MODAL (EDIT & PIN)
-// ==========================================================================
-
-export async function openEditModal(id) {
-    const item = await dbGetId(id);
-    if (!item) return;
-
-    const defaultNotes = [ "Pemasukan Cash", "Pemasukan QRIS", "Pemasukan Bank" ];
-
-    document.getElementById("edit-id").value = item.id;
-    document.getElementById("edit-type").value =
-        item.type === "Transfer"
-            ? (item.subType === "bank" ? "Transfer-bank" : "Transfer-qris")
-            : item.type;
-
-    document.getElementById("edit-amount").value = item.amount;
-    document.getElementById("edit-keterangan").value = defaultNotes.includes(item.note) ? "" : item.note;
-    document.getElementById("edit-modal").classList.add("active");
-}
-
-export function closeEditModal() {
-    document.getElementById("edit-modal").classList.remove("active");
-}
-
-export async function handleEditSubmit(e) {
-    e.preventDefault();
-    const id = parseInt(document.getElementById("edit-id").value, 10);
-    const selectedType = document.getElementById("edit-type").value;
-    const amount = parseInt(document.getElementById("edit-amount").value, 10);
-    const note = document.getElementById("edit-keterangan").value.trim();
-
-    const existing = await dbGetId(id);
-
-    if (existing) {
-        if (selectedType.startsWith("Transfer-")) {
-            existing.type = "Transfer";
-            existing.subType = selectedType === "Transfer-bank" ? "bank" : "qris";
-        } else {
-            existing.type = selectedType;
-            existing.subType = null;
-        }
-
-        existing.amount = amount;
-        existing.note =
-            note ||
-            (existing.type === "Cash"
-                ? "Pemasukan Cash"
-                : existing.type === "Out"
-                    ? "Pengeluaran"
-                    : existing.subType === "bank" ? "Pemasukan Bank" : "Pemasukan QRIS");
-        await dbUpdate(existing);
-        await addToSyncQueue("update", existing.id, existing);
-        processPendingSyncQueue();
-        await renderRecentTransactions();
-        await renderHistory();
-        closeEditModal();
-        showToast("Transaksi diperbarui!");
+    if (last7DaysChart) {
+     //   last7DaysChart.destroy();
     }
-}
 
-export function openChangePinModal() {
-    document.getElementById("pin-old").value = "";
-    document.getElementById("pin-new").value = "";
-    document.getElementById("pin-confirm").value = "";
-    document.getElementById("change-pin-modal").classList.add("active");
-}
+    if (last30DaysChart) {
+    //    last30DaysChart.destroy();
+    }
 
-export function closeChangePinModal() {
-    document.getElementById("change-pin-modal").classList.remove("active");
-}
+    todayChart = createChart(
+        "todayChart",
+        performance.today
+    );
 
-export function handleChangePinSubmit(e) {
-    e.preventDefault();
-    const oldPin = document.getElementById("pin-old").value;
-    const newPin = document.getElementById("pin-new").value;
-    const confirmPin = document.getElementById("pin-confirm").value;
+    last7DaysChart = createChart(
+        "last7DaysChart",
+        performance.last7Days
+    );
 
-    if (oldPin !== state.appPin) return showToast("PIN saat ini tidak sesuai!");
-    if (newPin.length !== 4 || isNaN(newPin)) return showToast("PIN Baru harus 4 digit angka!");
-    if (newPin !== confirmPin) return showToast("Konfirmasi PIN Baru tidak cocok!");
-
-    state.appPin = newPin;
-    localStorage.setItem("app_pin", newPin);
-    closeChangePinModal();
-    showToast("PIN Aplikasi berhasil diperbarui!");
+    last30DaysChart = createChart(
+        "last30DaysChart",
+        performance.last30Days
+    );
+    
 }

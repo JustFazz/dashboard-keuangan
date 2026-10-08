@@ -1,281 +1,271 @@
-import { openDB } from "./db.js";
-import { SYNC_QUEUE_STORE } from "./config.js";
-import { showToast } from "./utils.js";
+/**
+ * Modul Sinkronisasi - Monitoring Toko (HP2)
+ * Bagian 1: Fungsi pembacaan data read-only dari Firebase Realtime Database.
+ */
 
-export function firebaseLogin() {
-    const email = document.getElementById("firebase-email").value.trim();
-    const password = document.getElementById("firebase-password").value;
-    const status = document.getElementById("firebase-login-status");
-
-    if (!email || !password) {
-        status.textContent = "Email dan password harus diisi.";
-        return;
-    }
-    status.textContent = "Sedang login...";
-
-    firebase
-        .auth()
-        .signInWithEmailAndPassword(email, password)
-        .then(() => {
-            status.textContent = "Login berhasil.";
-            document.getElementById("firebase-login-screen").style.display =
-                "none";
-        })
-        .catch((error) => {
-            console.error(error);
-            status.textContent = "Login gagal: " + error.message;
-        });
-}
-
+/**
+ * Helper untuk mendapatkan path tanggal Firebase berdasarkan UID user yang login.
+ * Mengubah "2026-09-22" menjadi "{uid}/data/2026/09/22"
+ * @param {string} dateOnly - Format "YYYY-MM-DD"
+ * @returns {string} Path Firebase
+ */
 function getFirebaseDatePath(dateOnly) {
-    const [ year, month, day ] = dateOnly.split("-");
-
-    return `${firebase.auth().currentUser?.uid}/${year}/${month}/${day}`;
+    const user = auth.currentUser;
+    if (!user) {
+        throw new Error("Pengguna belum terautentikasi (belum login).");
+    }
+    
+    const [year, month, day] = dateOnly.split("-");
+    // Sesuaikan prefix jika HP1 menggunakan ${user.uid}/data/...
+    return `${user.uid}/${year}/${month}/${day}`;
 }
 
-// DB
+/**
+ * Helper untuk mendapatkan path bulan Firebase berdasarkan UID user yang login.
+ * Mengubah "2026-09" menjadi "{uid}/data/2026/09"
+ * @param {string} yearMonth - Format "YYYY-MM"
+ * @returns {string} Path Firebase
+ */
+function getFirebaseMonthPath(yearMonth) {
+    const user = auth.currentUser;
+    if (!user) {
+        throw new Error("Pengguna belum terautentikasi (belum login).");
+    }
 
-export async function addToSyncQueue(operation, transactionId, data = null) {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(SYNC_QUEUE_STORE, "readwrite");
-        const store = tx.objectStore(SYNC_QUEUE_STORE);
-
-        const queueItem = {
-            queueId:
-                Date.now().toString() +
-                "-" +
-                Math.random().toString(36).substring(2, 8),
-            operation,
-            transactionId,
-            data,
-            status: "pending",
-            createdAt: Date.now(),
-        };
-
-        const req = store.add(queueItem);
-        req.onsuccess = () => resolve(queueItem);
-        req.onerror = () => reject(req.error);
-    });
+    const [year, month] = yearMonth.split("-");
+    return `${user.uid}/${year}/${month}`;
 }
 
-export async function getSyncQueue() {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(SYNC_QUEUE_STORE, "readonly");
-        const store = tx.objectStore(SYNC_QUEUE_STORE);
-        const req = store.getAll();
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-    });
-}
-
-export async function getPendingSyncQueue() {
-    const queue = await getSyncQueue();
-    return queue.filter((item) => item.status === "pending");
-}
-
-export async function updateSyncQueueStatus(queueId, status) {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(SYNC_QUEUE_STORE, "readwrite");
-        const store = tx.objectStore(SYNC_QUEUE_STORE);
-        const getReq = store.get(queueId);
-
-        getReq.onsuccess = () => {
-            const item = getReq.result;
-            if (!item) {
-                reject(new Error("Queue item tidak ditemukan"));
-                return;
-            }
-            item.status = status;
-            const putReq = store.put(item);
-            putReq.onsuccess = () => resolve(item);
-            putReq.onerror = () => reject(putReq.error);
-        };
-        getReq.onerror = () => reject(getReq.error);
-    });
-}
-
-// PROCESS
-
-export async function processSyncQueueItem(queueItem) {
+/**
+ * Membaca metadata versi transaksi untuk tanggal tertentu dari Firebase.
+ * @param {string} dateOnly - Format "YYYY-MM-DD"
+ * @returns {Promise<Object|null>} Objek metadata { version, updatedAt } atau null jika tidak ada
+ */
+async function getFirebaseMetadata(dateOnly) {
     try {
-        if (queueItem.operation === "create") {
-            await syncCreateToFirebase(queueItem);
-
-        } else if (queueItem.operation === "update") {
-            await syncUpdateToFirebase(queueItem);
-
-        } else if (queueItem.operation === "delete") {
-            await syncDeleteToFirebase(queueItem);
-
-        } else {
-            throw new Error(
-                "Operation belum didukung: " + queueItem.operation
-            );
-        } await updateSyncQueueStatus(queueItem.queueId, "ready");
-        return { success: true, queueItem };
+        const path = `${getFirebaseDatePath(dateOnly)}/metadata`;
+        const snapshot = await rtdb.ref(path).once("value");
+        return snapshot.exists() ? snapshot.val() : null;
     } catch (error) {
-        console.error("Sync gagal:", error);
-        return { success: false, queueItem, error };
+        console.error("Gagal mengambil metadata Firebase untuk tanggal " + dateOnly + ":", error);
+        throw error;
     }
 }
 
-let syncRunning = false;
-let syncSuccess = false;
-
-export async function processPendingSyncQueue() {
-    if (syncRunning) return;
-
-    syncRunning = true;
-
+/**
+ * Membaca daftar transaksi untuk tanggal tertentu dari Firebase.
+ * @param {string} dateOnly - Format "YYYY-MM-DD"
+ * @returns {Promise<Array>} Array transaksi dari Firebase
+ */
+async function getFirebaseTransactions(dateOnly) {
     try {
-        syncSuccess = false;
-        document.getElementById("version").style.color = syncSuccess ? "#3b82f6" : "#000000";
-        while (true) {
-            const pendingQueue = (await getPendingSyncQueue())
-                .sort((a, b) => a.createdAt - b.createdAt);
-
-            if (pendingQueue.length === 0) {
-                break;
-            }
-
-            const queueItem = pendingQueue[ 0 ];
-
-            console.log("MULAI:", queueItem.queueId);
-
-            const result = await processSyncQueueItem(queueItem);
-
-            console.log("HASIL:", result);
-
-            console.log(
-                `Queue: ${queueItem.queueId}\nSuccess: ${result.success}`
-            );
-
-            if (!result.success) {
-                console.log("BREAK");
-                syncSuccess = false;
-                break;
-            }
-            syncSuccess = true;
+        const path = `${getFirebaseDatePath(dateOnly)}/transactions`;
+        const snapshot = await rtdb.ref(path).once("value");
+        if (!snapshot.exists()) {
+            return [];
         }
 
+        const dataObj = snapshot.val();
+        return Object.values(dataObj);
     } catch (error) {
-        console.error("Sync Queue error:", error);
-
-    } finally {
-        syncRunning = false;
-        document.getElementById("version").style.color = syncSuccess ? "#3b82f6" : "#000000";
+        console.error("Gagal mengambil transaksi Firebase untuk tanggal " + dateOnly + ":", error);
+        throw error;
     }
 }
 
-// FIREBASE OPERATION
+/**
+ * Membaca node satu bulan dari Firebase ("{uid}/data/YYYY/MM") satu kali saja
+ * untuk mengumpulkan metadata seluruh tanggal dalam bulan tersebut.
+ * @param {string} yearMonth - Format "YYYY-MM"
+ * @returns {Promise<Object>} Map metadata per tanggal { "YYYY-MM-DD": { version, updatedAt } }
+ */
+async function getFirebaseMonthMetadata(yearMonth) {
+    try {
+        const monthPath = getFirebaseMonthPath(yearMonth);
+        const snapshot = await rtdb.ref(monthPath).once("value");
 
-export async function updateFirebaseMetadata(dateOnly) {
-    if (!dateOnly) {
-        throw new Error("dateOnly tidak ditemukan");
+        const resultMap = {};
+
+        if (!snapshot.exists()) {
+            return resultMap;
+        }
+
+        const monthData = snapshot.val();
+        const [year, month] = yearMonth.split("-");
+
+        // monthData berisi key tanggal seperti "01", "02", ..., "31"
+        Object.keys(monthData).forEach((dayKey) => {
+            const dayData = monthData[dayKey];
+            if (dayData && dayData.metadata) {
+                const fullDate = `${year}-${month}-${dayKey}`;
+                resultMap[fullDate] = dayData.metadata;
+            }
+        });
+
+        return resultMap;
+    } catch (error) {
+        console.error("Gagal mengambil metadata bulan Firebase untuk " + yearMonth + ":", error);
+        throw error;
+    }
+}
+
+// Map untuk mencegah pemanggilan ganda sinkronisasi tanggal yang sama dalam waktu bersamaan
+const dateSyncTasks = new Map();
+
+/**
+ * Fungsi utama sinkronisasi tanggal tunggal (Non-blocking).
+ * Memeriksa apakah sinkronisasi tanggal tersebut sedang berjalan. Jika ya, mengembalikan Promise yang sama.
+ * @param {string} dateOnly - Format "YYYY-MM-DD"
+ * @returns {Promise<Object>} Status hasil { updated: boolean, reason: string }
+ */
+function syncDateIfNeeded(dateOnly) {
+    if (dateSyncTasks.has(dateOnly)) {
+        // Jika sedang berjalan untuk tanggal ini, kembalikan tugas yang sedang aktif
+        return dateSyncTasks.get(dateOnly);
     }
 
-    const datePath = getFirebaseDatePath(dateOnly);
+    // Buat task sinkronisasi baru dan simpan di Map
+    const taskPromise = performDateSync(dateOnly).finally(() => {
+        // Hapus dari Map setelah selesai (baik sukses maupun gagal)
+        dateSyncTasks.delete(dateOnly);
+    });
 
-    const metadataRef = firebase
-        .database()
-        .ref(`${datePath}/metadata`);
+    dateSyncTasks.set(dateOnly, taskPromise);
+    return taskPromise;
+}
 
-    const result = await metadataRef.transaction((metadata) => {
-        if (!metadata) {
-            return {
-                version: 1,
-                updatedAt: firebase.database.ServerValue.TIMESTAMP
-            };
+/**
+ * Eksekusi aktual perbandingan versi dan pembaruan data transaksi.
+ * @param {string} dateOnly - Format "YYYY-MM-DD"
+ * @returns {Promise<Object>}
+ */
+async function performDateSync(dateOnly) {
+    try {
+        // 1. Ambil metadata dari Firebase
+        const fbMetadata = await getFirebaseMetadata(dateOnly);
+
+        // Jika metadata Firebase tidak ada (misal belum ada transaksi di server)
+        if (!fbMetadata || typeof fbMetadata.version === "undefined") {
+            return { updated: false, reason: "NO_SERVER_METADATA" };
+        }
+
+        // 2. Ambil metadata lokal dari IndexedDB
+        const localMetadata = await getLocalSyncMetadata(dateOnly);
+        const localVersion = localMetadata ? localMetadata.version : null;
+
+        // 3. Bandingkan versi Firebase vs Lokal
+        if (localVersion !== null && localVersion === fbMetadata.version) {
+            // Versi sama, tidak perlu download transaksi
+            return { updated: false, reason: "ALREADY_UP_TO_DATE" };
+        }
+
+        // 4. Versi berbeda / belum pernah disinkronkan -> Download transaksi dari Firebase
+        const remoteTransactions = await getFirebaseTransactions(dateOnly);
+
+        // 5. Timpa data transaksi lokal di IndexedDB
+        await replaceLocalTransactionsByDate(dateOnly, remoteTransactions);
+
+        // 6. Simpan version baru ke metadata lokal IndexedDB
+        await saveLocalSyncMetadata({
+            date: dateOnly,
+            version: fbMetadata.version,
+            syncedAt: Date.now()
+        });
+
+        return { updated: true, reason: "SYNC_SUCCESS" };
+    } catch (error) {
+        console.warn(`Sinkronisasi tanggal ${dateOnly} gagal atau offline:`, error);
+        return { updated: false, reason: "SYNC_FAILED", error: error.message };
+    }
+}
+// Map untuk mencegah pemanggilan ganda sinkronisasi bulan yang sama dalam waktu bersamaan
+const monthSyncTasks = new Map();
+
+/**
+ * Fungsi utama sinkronisasi bulan (Non-blocking).
+ * Memeriksa apakah sinkronisasi bulan tersebut sedang berjalan. Jika ya, mengembalikan Promise yang sama.
+ * @param {string} yearMonth - Format "YYYY-MM" (contoh: "2026-09")
+ * @returns {Promise<Object>} Status hasil { changed: boolean, changedDates: Array, failedDates: Array }
+ */
+function syncMonthIfNeeded(yearMonth) {
+    if (monthSyncTasks.has(yearMonth)) {
+        return monthSyncTasks.get(yearMonth);
+    }
+
+    const taskPromise = performMonthSync(yearMonth).finally(() => {
+        monthSyncTasks.delete(yearMonth);
+    });
+
+    monthSyncTasks.set(yearMonth, taskPromise);
+    return taskPromise;
+}
+
+/**
+ * Eksekusi aktual perbandingan versi dan pembaruan parsial transaksi bulanan.
+ * @param {string} yearMonth - Format "YYYY-MM"
+ * @returns {Promise<Object>}
+ */
+async function performMonthSync(yearMonth) {
+    const changedDates = [];
+    const failedDates = [];
+
+    try {
+        // 1. Ambil seluruh metadata tanggal pada bulan ini dalam 1 request
+        const remoteMonthMeta = await getFirebaseMonthMetadata(yearMonth);
+        const datesInMonth = Object.keys(remoteMonthMeta);
+
+        // Jika di Firebase belum ada data sama sekali untuk bulan ini
+        if (datesInMonth.length === 0) {
+            return { changed: false, changedDates: [], failedDates: [] };
+        }
+
+        // 2. Bandingkan versi tiap tanggal dengan metadata lokal IndexedDB
+        const datesToSync = [];
+        for (const dateOnly of datesInMonth) {
+            const fbMeta = remoteMonthMeta[dateOnly];
+            if (fbMeta && typeof fbMeta.version !== "undefined") {
+                const localMeta = await getLocalSyncMetadata(dateOnly);
+                const localVersion = localMeta ? localMeta.version : null;
+
+                // Jika versi lokal berbeda atau belum ada -> masukkan ke daftar download
+                if (localVersion === null || localVersion !== fbMeta.version) {
+                    datesToSync.push(dateOnly);
+                }
+            }
+        }
+
+        // Jika semua tanggal dalam bulan ini sudah versi terbaru
+        if (datesToSync.length === 0) {
+            return { changed: false, changedDates: [], failedDates: [] };
+        }
+
+        // 3. Download transaksi HANYA untuk tanggal-tanggal yang berubah/baru
+        for (const dateOnly of datesToSync) {
+            try {
+                const syncResult = await performDateSync(dateOnly);
+                if (syncResult.updated) {
+                    changedDates.push(dateOnly);
+                } else if (syncResult.reason === "SYNC_FAILED") {
+                    failedDates.push(dateOnly);
+                }
+            } catch (err) {
+                console.warn(`Gagal sinkronisasi parsial tanggal ${dateOnly}:`, err);
+                failedDates.push(dateOnly);
+            }
         }
 
         return {
-            version: (metadata.version || 0) + 1,
-            updatedAt: firebase.database.ServerValue.TIMESTAMP
+            changed: changedDates.length > 0,
+            changedDates: changedDates,
+            failedDates: failedDates
         };
-    });
-
-    return result.snapshot.val();
-}
-
-
-export async function syncCreateToFirebase(queueItem) {
-    if (queueItem.operation !== "create")
-        throw new Error("Operation bukan create");
-    const data = queueItem.data;
-    if (!data || !data.id) throw new Error("Data transaksi tidak valid");
-    const date = data.dateOnly;
-
-    if (!date) {
-        throw new Error("dateOnly tidak ditemukan");
+    } catch (error) {
+        console.warn(`Gagal sinkronisasi bulan ${yearMonth}:`, error);
+        return {
+            changed: false,
+            changedDates: changedDates,
+            failedDates: failedDates,
+            error: error.message
+        };
     }
-
-    const datePath = getFirebaseDatePath(date);
-    const transactionKey = String(data.id);
-    const transactionRef = firebase
-        .database()
-        .ref(`${datePath}/transactions/${transactionKey}`);
-    await transactionRef.set(data);
-    await updateFirebaseMetadata(date);
-    return true;
-}
-
-export async function syncUpdateToFirebase(queueItem) {
-    if (queueItem.operation !== "update")
-        throw new Error("Operation bukan update");
-    const data = queueItem.data;
-    if (!data || !data.id)
-        throw new Error("Data transaksi tidak valid");
-    const date = data.dateOnly;
-
-    if (!date) {
-        throw new Error("dateOnly tidak ditemukan");
-    }
-
-    const datePath = getFirebaseDatePath(date);
-    const transactionKey = String(data.id);
-    const transactionRef = firebase
-        .database()
-        .ref(`${datePath}/transactions/${transactionKey}`);
-
-    // Update transaksi
-    await transactionRef.set(data);
-
-    // Update metadata setelah transaksi berhasil
-    await updateFirebaseMetadata(date);
-
-    return true;
-}
-
-export async function syncDeleteToFirebase(queueItem) {
-    if (queueItem.operation !== "delete")
-        throw new Error("Operation bukan delete");
-
-    const data = queueItem.data;
-
-    if (!data || !data.id)
-        throw new Error("Data transaksi tidak valid");
-
-    const date = data.dateOnly;
-
-    if (!date) {
-        throw new Error("dateOnly tidak ditemukan");
-    }
-
-    const datePath = getFirebaseDatePath(date);
-    const transactionKey = String(data.id);
-
-    const transactionRef = firebase
-        .database()
-        .ref(`${datePath}/transactions/${transactionKey}`);
-
-    // Hapus transaksi
-    await transactionRef.remove();
-
-    // Update metadata setelah transaksi berhasil dihapus
-    await updateFirebaseMetadata(date);
-
-    return true;
 }
